@@ -6,7 +6,8 @@ import type {
   VivaResponse,
 } from '../../src/types/codexam.ts';
 
-const MODEL_NAME = 'gemini-4-hydrogen';
+const PRIMARY_MODEL = 'gemini-4-hydrogen';
+const FALLBACK_MODEL = 'gemini-2.5-flash';
 const VALID_LANGUAGES: SupportedLanguage[] = ['C++', 'Python', 'Java', 'JavaScript', 'C', 'SQL'];
 
 function getEnvApiKey(): string | undefined {
@@ -14,7 +15,10 @@ function getEnvApiKey(): string | undefined {
     Netlify?: { env?: { get?: (key: string) => string | undefined } };
     Deno?: { env?: { get?: (key: string) => string | undefined } };
   };
-  return g.Netlify?.env?.get?.('GEMINI_API_KEY') ?? g.Deno?.env?.get?.('GEMINI_API_KEY');
+  const raw = g.Netlify?.env?.get?.('GEMINI_API_KEY') ?? g.Deno?.env?.get?.('GEMINI_API_KEY');
+  if (!raw) return undefined;
+  const cleaned = raw.trim().replace(/^["']|["']$/g, '').trim();
+  return cleaned || undefined;
 }
 
 function isValidLanguage(value: unknown): value is SupportedLanguage {
@@ -49,20 +53,106 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
+interface ParsedGoogleError {
+  statusText: string;
+  message: string;
+  reason: string;
+}
+
+function parseGoogleErrorBody(rawBody: string): ParsedGoogleError {
+  const sanitize = (text: string) => text.replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED_KEY]');
+  try {
+    const parsed = JSON.parse(rawBody) as {
+      error?: {
+        status?: string;
+        message?: string;
+        details?: Array<{ reason?: string }>;
+      };
+    };
+    const statusText = typeof parsed?.error?.status === 'string' ? parsed.error.status : '';
+    const message = typeof parsed?.error?.message === 'string' ? sanitize(parsed.error.message) : '';
+    let reason = '';
+    if (Array.isArray(parsed?.error?.details)) {
+      for (const detail of parsed.error.details) {
+        if (typeof detail?.reason === 'string' && detail.reason) {
+          reason = detail.reason;
+          break;
+        }
+      }
+    }
+    return { statusText, message, reason };
+  } catch {
+    return { statusText: '', message: sanitize(rawBody.slice(0, 300).trim()), reason: '' };
+  }
+}
+
 function mapHttpError(status: number, rawBody: string): string {
-  if (status === 403 || rawBody.includes('PERMISSION_DENIED')) {
-    return 'Gemini API permission denied. Verify GEMINI_API_KEY in Netlify Site configuration > Environment variables.';
+  const { statusText, message, reason } = parseGoogleErrorBody(rawBody);
+  const lower = `${statusText} ${reason} ${message}`.toLowerCase();
+
+  if (
+    reason === 'API_KEY_INVALID' ||
+    rawBody.includes('API_KEY_INVALID') ||
+    lower.includes('api key not valid') ||
+    lower.includes('api_key_invalid')
+  ) {
+    return 'Your GEMINI_API_KEY in Netlify is invalid. Create a Gemini API key at aistudio.google.com/apikey, paste only the raw AIza... key (without quotes or spaces) in Netlify Site configuration > Environment variables > GEMINI_API_KEY, and trigger a new deploy.';
   }
-  if (status === 400 || rawBody.includes('API_KEY_INVALID')) {
-    return 'Gemini API rejected the request or API key. Check your input and GEMINI_API_KEY.';
+
+  if (
+    reason === 'API_KEY_HTTP_REFERRER_BLOCKED' ||
+    reason === 'API_KEY_IP_ADDRESS_BLOCKED' ||
+    reason === 'API_KEY_ANDROID_APP_BLOCKED' ||
+    reason === 'API_KEY_IOS_APP_BLOCKED' ||
+    reason === 'API_KEY_SERVICE_BLOCKED'
+  ) {
+    return `Your GEMINI_API_KEY has Google Cloud restrictions blocking Netlify Edge requests (${message || reason}). Set API restrictions to None or allow the Generative Language API.`;
   }
-  if (status === 429 || rawBody.includes('RESOURCE_EXHAUSTED')) {
-    return 'Rate limit reached on the Gemini API. Please wait a moment and try again.';
+
+  if (status === 403 || statusText === 'PERMISSION_DENIED' || rawBody.includes('PERMISSION_DENIED')) {
+    return `Gemini API permission denied${message ? `: ${message}` : '. Verify GEMINI_API_KEY in Netlify Site configuration > Environment variables.'}`;
   }
-  if (status === 404 || rawBody.includes('NOT_FOUND')) {
-    return 'Configured Gemini model was not found or is temporarily unavailable.';
+
+  if (status === 429 || statusText === 'RESOURCE_EXHAUSTED' || rawBody.includes('RESOURCE_EXHAUSTED')) {
+    return `Rate limit or quota reached on the Gemini API${message ? `: ${message}` : '. Please wait a moment and try again.'}`;
   }
-  return `Gemini request failed (HTTP ${status}).`;
+
+  if (status === 404 || statusText === 'NOT_FOUND' || rawBody.includes('NOT_FOUND')) {
+    return `Configured Gemini model was not found${message ? `: ${message}` : '.'}`;
+  }
+
+  if (status === 400) {
+    return message
+      ? `Gemini rejected the request: ${message}`
+      : 'Gemini API rejected the request (HTTP 400). Check your uploaded file and GEMINI_API_KEY.';
+  }
+
+  return message ? `Gemini request failed (HTTP ${status}): ${message}` : `Gemini request failed (HTTP ${status}).`;
+}
+
+function shouldFallbackModelOrConfig(status: number, rawBody: string): boolean {
+  if (status !== 400 && status !== 404) return false;
+  const { statusText, message, reason } = parseGoogleErrorBody(rawBody);
+  const lower = `${statusText} ${reason} ${message}`.toLowerCase();
+  if (
+    reason.startsWith('API_KEY_') ||
+    lower.includes('api key') ||
+    lower.includes('location is not supported') ||
+    lower.includes('unable to process') ||
+    lower.includes('no pages') ||
+    lower.includes('password')
+  ) {
+    return false;
+  }
+  return (
+    status === 404 ||
+    lower.includes('model') ||
+    lower.includes('thinkinglevel') ||
+    lower.includes('thinking_level') ||
+    lower.includes('thinkingconfig') ||
+    lower.includes('not found') ||
+    lower.includes('not supported')
+  );
 }
 
 function parseJsonSafely<T>(rawText: string | undefined, fallbackMessage: string): T {
@@ -86,44 +176,82 @@ function parseJsonSafely<T>(rawText: string | undefined, fallbackMessage: string
   }
 }
 
+async function sendGenerateContent(
+  apiKey: string,
+  model: string,
+  payload: Record<string, unknown>,
+): Promise<Response> {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+      'User-Agent': 'aistudio-build',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+function stripThinkingConfig(payload: Record<string, unknown>): Record<string, unknown> {
+  const genCfg = payload.generationConfig;
+  if (!genCfg || typeof genCfg !== 'object') return payload;
+  const { thinkingConfig: _removed, ...restCfg } = genCfg as Record<string, unknown>;
+  return { ...payload, generationConfig: restCfg };
+}
+
 async function callGeminiStructured<T>(
   apiKey: string,
   payload: Record<string, unknown>,
   fallbackMessage: string,
 ): Promise<T> {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
+  const strategies: Array<{ model: string; body: Record<string, unknown> }> = [
+    { model: PRIMARY_MODEL, body: payload },
+    { model: PRIMARY_MODEL, body: stripThinkingConfig(payload) },
+    { model: FALLBACK_MODEL, body: stripThinkingConfig(payload) },
+  ];
 
   let lastError: Error | null = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'User-Agent': 'aistudio-build',
-      },
-      body: JSON.stringify(payload),
-    });
 
-    if (res.ok) {
-      const json = (await res.json()) as {
-        candidates?: Array<{
-          content?: { parts?: Array<{ text?: string }> };
-        }>;
-      };
-      const text = json.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text ?? '')
-        .join('')
-        .trim();
-      return parseJsonSafely<T>(text, fallbackMessage);
-    }
+  for (let sIdx = 0; sIdx < strategies.length; sIdx++) {
+    const { model, body } = strategies[sIdx];
+    let canTryNextStrategy = false;
 
-    const errText = await res.text();
-    lastError = new Error(mapHttpError(res.status, errText));
-    if (res.status !== 500 && res.status !== 503) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const res = await sendGenerateContent(apiKey, model, body);
+
+      if (res.ok) {
+        const json = (await res.json()) as {
+          candidates?: Array<{
+            content?: { parts?: Array<{ text?: string }> };
+          }>;
+        };
+        const text = json.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text ?? '')
+          .join('')
+          .trim();
+        return parseJsonSafely<T>(text, fallbackMessage);
+      }
+
+      const errText = await res.text();
+      lastError = new Error(mapHttpError(res.status, errText));
+
+      if ((res.status === 500 || res.status === 503) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
+
+      if (sIdx < strategies.length - 1 && shouldFallbackModelOrConfig(res.status, errText)) {
+        canTryNextStrategy = true;
+        break;
+      }
+
       throw lastError;
     }
-    await new Promise((r) => setTimeout(r, 400));
+
+    if (!canTryNextStrategy) {
+      break;
+    }
   }
 
   throw lastError ?? new Error(fallbackMessage);
@@ -183,11 +311,11 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   const apiKey = getEnvApiKey();
-  if (!apiKey) {
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.toUpperCase().includes('YOUR_API_KEY')) {
     return jsonResponse(
       {
         error:
-          'GEMINI_API_KEY is not configured. Add it in Netlify Site configuration > Environment variables and redeploy.',
+          'GEMINI_API_KEY is missing or still set to a placeholder. Add your Google AI Studio key (AIza...) in Netlify Site configuration > Environment variables and redeploy.',
       },
       500,
     );
@@ -259,12 +387,30 @@ export default async function handler(req: Request): Promise<Response> {
         );
       }
 
+      const inferBinaryMime = (name: string, currentMime: string): string => {
+        if (currentMime && currentMime !== 'application/octet-stream') return currentMime;
+        const ext = name.split('.').pop()?.toLowerCase() ?? '';
+        if (ext === 'pdf') return 'application/pdf';
+        if (ext === 'png') return 'image/png';
+        if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+        if (ext === 'webp') return 'image/webp';
+        return currentMime || 'application/pdf';
+      };
+
       const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
       for (const file of validFiles) {
         if (file.isText) {
           textSections.push('', `--- Uploaded File: ${file.name} ---`, file.data, `--- End of ${file.name} ---`);
         } else {
-          parts.push({ inlineData: { mimeType: file.mimeType, data: file.data } });
+          const cleanBase64 = file.data.replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
+          if (cleanBase64.length > 0) {
+            parts.push({
+              inlineData: {
+                mimeType: inferBinaryMime(file.name, file.mimeType),
+                data: cleanBase64,
+              },
+            });
+          }
         }
       }
       parts.push({ text: textSections.join('\n') });
@@ -272,7 +418,7 @@ export default async function handler(req: Request): Promise<Response> {
       const parsed = await callGeminiStructured<SolveResponse>(
         apiKey,
         {
-          systemInstruction: { parts: [{ text: systemText }] },
+          systemInstruction: { role: 'user', parts: [{ text: systemText }] },
           contents: [{ role: 'user', parts }],
           generationConfig: {
             thinkingConfig: { thinkingLevel: 'LOW' },
@@ -359,7 +505,7 @@ export default async function handler(req: Request): Promise<Response> {
       const parsed = await callGeminiStructured<DebugResponse>(
         apiKey,
         {
-          systemInstruction: { parts: [{ text: systemText }] },
+          systemInstruction: { role: 'user', parts: [{ text: systemText }] },
           contents: [
             {
               role: 'user',
@@ -505,7 +651,7 @@ export default async function handler(req: Request): Promise<Response> {
       const parsed = await callGeminiStructured<VivaResponse>(
         apiKey,
         {
-          systemInstruction: { parts: [{ text: systemText }] },
+          systemInstruction: { role: 'user', parts: [{ text: systemText }] },
           contents: [
             {
               role: 'user',

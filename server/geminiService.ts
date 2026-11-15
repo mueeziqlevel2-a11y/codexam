@@ -14,8 +14,9 @@ const MODEL_NAME = 'gemini-4-hydrogen';
 let cachedClient: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const rawKey = process.env.GEMINI_API_KEY;
+  const apiKey = rawKey?.trim().replace(/^["']|["']$/g, '').trim();
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     throw new GeminiServiceError(
       'GEMINI_API_KEY is not configured on the server. Please add it in Settings > Secrets.',
       500,
@@ -90,16 +91,27 @@ function mapGeminiError(err: unknown): GeminiServiceError {
   if (err instanceof GeminiServiceError) {
     return err;
   }
-  const rawMessage = err instanceof Error ? err.message : String(err);
+  const rawMessage = (err instanceof Error ? err.message : String(err)).replace(
+    /AIza[0-9A-Za-z_-]{20,}/g,
+    '[REDACTED_KEY]',
+  );
+  const lower = rawMessage.toLowerCase();
+
+  if (rawMessage.includes('API_KEY_INVALID') || lower.includes('api key not valid')) {
+    return new GeminiServiceError(
+      'Invalid GEMINI_API_KEY. Please verify your Gemini API key in Settings > Secrets.',
+      400,
+    );
+  }
   if (rawMessage.includes('403') || rawMessage.includes('PERMISSION_DENIED')) {
     return new GeminiServiceError(
-      'Gemini API permission denied. Please verify your GEMINI_API_KEY in Settings > Secrets.',
+      `Gemini API permission denied (${rawMessage}). Please verify your GEMINI_API_KEY in Settings > Secrets.`,
       403,
     );
   }
-  if (rawMessage.includes('400') || rawMessage.includes('API_KEY_INVALID')) {
+  if (rawMessage.includes('400') || rawMessage.includes('INVALID_ARGUMENT')) {
     return new GeminiServiceError(
-      'Gemini API rejected the request or API key. Check your input and Settings > Secrets.',
+      `Gemini rejected the request: ${rawMessage}`,
       400,
     );
   }
