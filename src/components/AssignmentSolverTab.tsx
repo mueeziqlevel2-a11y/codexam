@@ -203,7 +203,7 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
             : `Server error (${response.status}). Check your GEMINI_API_KEY configuration and try again.`,
         );
       }
-      if (!response.ok) {
+      if (!response.ok || data.error) {
         throw new Error(data.error || `Failed to generate solution (HTTP ${response.status}).`);
       }
       setResult(data as SolveResponse);
