@@ -9,6 +9,8 @@ import {
   HardDrive,
   Loader2,
   Play,
+  ShieldAlert,
+  ShieldCheck,
   Terminal,
   X,
 } from 'lucide-react';
@@ -525,6 +527,69 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
               </div>
             )}
           </div>
+
+          {/* Hidden AI-Trap / Prompt-Injection Shield Card */}
+          {Array.isArray(result.hiddenTrapsDetected) && result.hiddenTrapsDetected.length > 0 && (
+            <div
+              role="region"
+              aria-label="Hidden AI Traps Detected and Blocked"
+              className="rounded-2xl border border-amber-300 bg-amber-50/90 p-5 shadow-xs sm:p-6"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 pb-3.5">
+                <div className="flex items-center gap-2.5">
+                  <ShieldAlert className="h-5 w-5 shrink-0 text-amber-700" />
+                  <h3 className="font-display text-base font-bold text-amber-950">
+                    Hidden AI Watermark Traps Detected &amp; Blocked ({result.hiddenTrapsDetected.length})
+                  </h3>
+                </div>
+                <span className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-900">
+                  Excluded from generated code
+                </span>
+              </div>
+              <p className="mt-2.5 text-xs leading-relaxed text-amber-900">
+                CodeXam detected hidden prompt-injection instructions (e.g., white text or invisible AI canary directives) embedded in your assignment. None of these trap variables or comments were placed in your solutions.
+              </p>
+              <ul className="mt-4 space-y-3">
+                {result.hiddenTrapsDetected.map((trap, idx) => (
+                  <li
+                    key={idx}
+                    className="rounded-xl border border-amber-200 bg-white p-3.5 text-xs text-slate-800"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-amber-900">{trap.location}</span>
+                      <span className="font-mono font-semibold text-red-700">
+                        Blocked: {trap.trapArtifact}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 leading-relaxed text-slate-700">
+                      {trap.hiddenInstruction}
+                    </p>
+                    <p className="mt-1 font-medium text-emerald-700">{trap.actionTaken}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Extracted Rubric Constraints Card */}
+          {Array.isArray(result.rubricConstraints) && result.rubricConstraints.length > 0 && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="h-4.5 w-4.5 shrink-0 text-emerald-700" />
+                <h3 className="font-display text-sm font-semibold text-emerald-950">
+                  Detected Rubric Constraints Enforced
+                </h3>
+              </div>
+              <ul className="mt-2.5 grid gap-1.5 sm:grid-cols-2">
+                {result.rubricConstraints.map((rule, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-xs text-slate-700">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600" />
+                    <span className="leading-relaxed">{rule}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Render Each Solved Question */}
           <div className="space-y-8">

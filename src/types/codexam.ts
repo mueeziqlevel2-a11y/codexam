@@ -30,8 +30,17 @@ export interface SolvedQuestion {
   keySteps: string[];
 }
 
+export interface HiddenTrap {
+  location: string;
+  hiddenInstruction: string;
+  trapArtifact: string;
+  actionTaken: string;
+}
+
 export interface SolveResponse {
   assignmentTitle: string;
+  hiddenTrapsDetected?: HiddenTrap[];
+  rubricConstraints?: string[];
   solutions: SolvedQuestion[];
 }
 
