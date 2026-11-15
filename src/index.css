@@ -1,0 +1,144 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --font-display: "Outfit", system-ui, sans-serif;
+    --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #F8FAFC;
+    color: #0F172A;
+    letter-spacing: 0.002em;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Clean alabaster canvas with subtle emerald top glow and architectural grid */
+.bg-white-emerald-canvas {
+  background-color: #F8FAFC;
+  background-image:
+    radial-gradient(ellipse 80% 42% at 50% -8%, rgba(16, 185, 129, 0.11), transparent 70%),
+    radial-gradient(rgba(15, 23, 42, 0.055) 1px, transparent 1px);
+  background-size: 100% 100%, 26px 26px;
+}
+
+/* Custom scrollbar for crisp light workspace */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Highlight.js high-contrast code theme inside dark IDE frames */
+.hljs {
+  color: #E2E8F0;
+  background: transparent;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #94A3B8;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-subst {
+  color: #6EE7B7;
+  font-weight: 500;
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag .hljs-attr {
+  color: #FCD34D;
+}
+
+.hljs-string,
+.hljs-doctag {
+  color: #34D399;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-selector-id,
+.hljs-title.function_ {
+  color: #7DD3FC;
+}
+
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-title.class_ {
+  color: #A7F3D0;
+}
+
+.hljs-tag,
+.hljs-name,
+.hljs-attribute {
+  color: #93C5FD;
+}
+
+.hljs-regexp,
+.hljs-link {
+  color: #5EEAD4;
+}
+
+.hljs-symbol,
+.hljs-bullet {
+  color: #FDBA74;
+}
+
+.hljs-built_in,
+.hljs-builtin-name {
+  color: #5EEAD4;
+}
+
+.hljs-meta {
+  color: #94A3B8;
+}
+
+.hljs-deletion {
+  background: rgba(239, 68, 68, 0.18);
+  color: #FCA5A5;
+}
+
+.hljs-addition {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6EE7B7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

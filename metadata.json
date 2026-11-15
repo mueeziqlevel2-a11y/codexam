@@ -1,0 +1,6 @@
+{
+  "name": "CodeXam",
+  "description": "All-in-one coding, debugging, and viva/demo preparation assistant built for university Computer Science and Software Engineering students.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
