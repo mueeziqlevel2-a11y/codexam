@@ -21,6 +21,7 @@ import type {
   SolveResponse,
   SupportedLanguage,
 } from '../types/codexam';
+import { postStreamingJson } from '../utils/streamApi';
 import { CodeBlock } from './CodeBlock';
 
 interface AssignmentSolverTabProps {
@@ -121,6 +122,7 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
   const [language, setLanguage] = useState<SupportedLanguage>('C++');
   const [includeComments, setIncludeComments] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SolveResponse | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<'all' | number>('all');
@@ -177,12 +179,18 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
 
     setLoading(true);
     setError(null);
+    setResult(null);
+    setSelectedQuestion('all');
+    setStatusText(
+      attachedFiles.length > 0
+        ? `Reading attached assignment file(s) and streaming ${language} solutions...`
+        : `Analyzing problem and streaming ${language} solution...`,
+    );
 
     try {
-      const response = await fetch('/api/solve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const finalData = await postStreamingJson<SolveResponse>({
+        url: '/api/solve',
+        body: {
           prompt: prompt.trim(),
           files: attachedFiles.map(({ name, mimeType, data, isText }) => ({
             name,
@@ -192,28 +200,19 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
           })),
           language,
           includeComments,
-        }),
+        },
+        onStatus: (message) => setStatusText(message),
+        onPartial: (partial) => {
+          setResult(partial as SolveResponse);
+        },
       });
-      const rawText = await response.text();
-      let data: Partial<SolveResponse> & { error?: string } = {};
-      try {
-        data = rawText ? JSON.parse(rawText) : {};
-      } catch {
-        throw new Error(
-          response.ok
-            ? 'Received an unexpected non-JSON response from the server.'
-            : `Server error (${response.status}). Check your GEMINI_API_KEY configuration and try again.`,
-        );
-      }
-      if (!response.ok || data.error) {
-        throw new Error(data.error || `Failed to generate solution (HTTP ${response.status}).`);
-      }
-      setResult(data as SolveResponse);
+      setResult(finalData);
       setSelectedQuestion('all');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
       setLoading(false);
+      setStatusText('');
     }
   }
 
@@ -436,13 +435,14 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
         <div
           role="status"
           aria-live="polite"
-          className="flex items-center gap-3.5 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-900"
+          className="flex items-center gap-3.5 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm font-medium text-emerald-900"
         >
           <Loader2 className="h-5 w-5 shrink-0 animate-spin text-emerald-600" />
           <span>
-            {attachedFiles.length > 0
-              ? `Reading attached assignment file(s), extracting all questions, and generating ${language} solutions...`
-              : `Designing algorithm, handling edge cases, and writing ${language} solution...`}
+            {statusText ||
+              (attachedFiles.length > 0
+                ? `Reading attached assignment file(s), extracting all questions, and streaming ${language} solutions...`
+                : `Designing algorithm, handling edge cases, and streaming ${language} solution...`)}
           </span>
         </div>
       )}
@@ -472,7 +472,7 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
       )}
 
       {/* Multi-Question / Single-Question Output Area */}
-      {result && !loading && (
+      {result && (
         <div className="space-y-6">
           {/* Assignment Header & Question Filter Bar */}
           <div className="flex flex-col justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-xs sm:flex-row sm:items-center">
@@ -484,8 +484,9 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
                 <span className="font-mono font-semibold tabular-nums text-emerald-700">
                   {result.solutions.length}
                 </span>{' '}
-                {result.solutions.length === 1 ? 'question solved' : 'questions extracted & solved'}{' '}
-                in {language}
+                {loading
+                  ? `solution${result.solutions.length === 1 ? '' : 's'} streaming in ${language}...`
+                  : `${result.solutions.length === 1 ? 'question solved' : 'questions extracted & solved'} in ${language}`}
               </p>
             </div>
 
@@ -556,15 +557,19 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
                     className="rounded-xl border border-amber-200 bg-white p-3.5 text-xs text-slate-800"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-semibold text-amber-900">{trap.location}</span>
+                      <span className="font-semibold text-amber-900">{trap.location ?? 'Assignment Document'}</span>
                       <span className="font-mono font-semibold text-red-700">
-                        Blocked: {trap.trapArtifact}
+                        Blocked: {trap.trapArtifact ?? 'Hidden canary'}
                       </span>
                     </div>
-                    <p className="mt-1.5 leading-relaxed text-slate-700">
-                      {trap.hiddenInstruction}
-                    </p>
-                    <p className="mt-1 font-medium text-emerald-700">{trap.actionTaken}</p>
+                    {trap.hiddenInstruction && (
+                      <p className="mt-1.5 leading-relaxed text-slate-700">
+                        {trap.hiddenInstruction}
+                      </p>
+                    )}
+                    {trap.actionTaken && (
+                      <p className="mt-1 font-medium text-emerald-700">{trap.actionTaken}</p>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -612,14 +617,16 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
                     </h3>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => onSendToViva(sol.code, language)}
-                    className="inline-flex min-h-[38px] items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-xs font-semibold text-emerald-800 whitespace-nowrap shrink-0 transition-colors hover:bg-emerald-100"
-                  >
-                    <span>Practice Viva on Q{sol.questionNumber}</span>
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
+                  {!loading && sol.code && (
+                    <button
+                      type="button"
+                      onClick={() => onSendToViva(sol.code, language)}
+                      className="inline-flex min-h-[38px] items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-xs font-semibold text-emerald-800 whitespace-nowrap shrink-0 transition-colors hover:bg-emerald-100"
+                    >
+                      <span>Practice Viva on Q{sol.questionNumber}</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Extracted Question Text */}
@@ -628,21 +635,28 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
                     Extracted Problem Statement
                   </div>
                   <p className="mt-1 text-sm leading-relaxed text-slate-800">
-                    {sol.extractedQuestion}
+                    {sol.extractedQuestion || 'Extracting question details...'}
                   </p>
                 </div>
 
                 {/* Code Output */}
-                <CodeBlock
-                  code={sol.code}
-                  language={language}
-                  showDownload={true}
-                  filename={
-                    language === 'Java'
-                      ? `Question${sol.questionNumber}Solution.java`
-                      : `question_${sol.questionNumber}${sol.fileExtension}`
-                  }
-                />
+                {sol.code ? (
+                  <CodeBlock
+                    code={sol.code}
+                    language={language}
+                    showDownload={!loading}
+                    filename={
+                      language === 'Java'
+                        ? `Question${sol.questionNumber}Solution.java`
+                        : `question_${sol.questionNumber}${sol.fileExtension}`
+                    }
+                  />
+                ) : (
+                  <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-[#0F172A] px-4 py-5 font-mono text-xs text-emerald-300">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Streaming {language} code for Question {sol.questionNumber}...</span>
+                  </div>
+                )}
 
                 {/* Logic & Complexity Summary */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
@@ -654,7 +668,7 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
                   </div>
 
                   <p className="mt-2.5 text-sm leading-relaxed text-slate-700">
-                    {sol.approachSummary}
+                    {sol.approachSummary || (loading ? 'Generating approach & Big-O summary...' : '')}
                   </p>
 
                   <div className="mt-4 grid gap-4 border-t border-b border-slate-200 py-3.5 sm:grid-cols-2">
@@ -663,7 +677,7 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
                       <div>
                         <div className="text-xs font-medium text-slate-500">Time Complexity</div>
                         <div className="mt-0.5 font-mono text-sm font-semibold text-slate-900">
-                          {sol.timeComplexity}
+                          {sol.timeComplexity || (loading ? 'Computing...' : 'N/A')}
                         </div>
                       </div>
                     </div>
@@ -673,7 +687,7 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
                       <div>
                         <div className="text-xs font-medium text-slate-500">Space Complexity</div>
                         <div className="mt-0.5 font-mono text-sm font-semibold text-slate-900">
-                          {sol.spaceComplexity}
+                          {sol.spaceComplexity || (loading ? 'Computing...' : 'N/A')}
                         </div>
                       </div>
                     </div>

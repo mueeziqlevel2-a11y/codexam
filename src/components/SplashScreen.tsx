@@ -1,4 +1,4 @@
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, ExternalLink } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect } from 'react';
 import { CodeXamLogo } from './CodeXamLogo';
@@ -57,14 +57,19 @@ export function SplashScreen({ onDismiss }: SplashScreenProps) {
           Solve. Debug. Ace Your Viva.
         </motion.p>
 
-        <motion.div
+        <motion.a
+          href="https://mueez-80.netlify.app/"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Visit Mueez Ahmed's portfolio website"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
-          className="mt-6 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-800 shadow-[0_4px_20px_rgba(16,185,129,0.16)]"
+          className="mt-6 inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-800 shadow-[0_4px_20px_rgba(16,185,129,0.16)] transition-colors hover:border-emerald-400 hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
         >
-          Made by Mueez Ahmed
-        </motion.div>
+          <span>Made by Mueez Ahmed</span>
+          <ExternalLink className="h-3.5 w-3.5 text-emerald-600" />
+        </motion.a>
 
         <div className="mt-8 h-1.5 w-56 overflow-hidden rounded-full bg-slate-200">
           <motion.div

@@ -20,6 +20,7 @@ import {
   inferLanguageFromFilename,
 } from '../constants/languages';
 import type { DebugResponse, SupportedLanguage } from '../types/codexam';
+import { postStreamingJson } from '../utils/streamApi';
 import { CodeBlock } from './CodeBlock';
 
 interface DebugOriginalityTabProps {
@@ -31,6 +32,7 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
   const [language, setLanguage] = useState<SupportedLanguage>('C++');
   const [uploadedFilename, setUploadedFilename] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DebugResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,35 +71,27 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
 
     setLoading(true);
     setError(null);
+    setResult(null);
+    setStatusText(`Scanning ${language} code for bugs, traps & boilerplate...`);
 
     try {
-      const response = await fetch('/api/debug', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const finalData = await postStreamingJson<DebugResponse>({
+        url: '/api/debug',
+        body: {
           code: code.trim(),
           language,
-        }),
+        },
+        onStatus: (message) => setStatusText(message),
+        onPartial: (partial) => {
+          setResult(partial as DebugResponse);
+        },
       });
-      const rawText = await response.text();
-      let data: Partial<DebugResponse> & { error?: string } = {};
-      try {
-        data = rawText ? JSON.parse(rawText) : {};
-      } catch {
-        throw new Error(
-          response.ok
-            ? 'Received an unexpected non-JSON response from the server.'
-            : `Server error (${response.status}). Check your GEMINI_API_KEY configuration and try again.`,
-        );
-      }
-      if (!response.ok || data.error) {
-        throw new Error(data.error || `Failed to debug and analyze code (HTTP ${response.status}).`);
-      }
-      setResult(data as DebugResponse);
+      setResult(finalData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
       setLoading(false);
+      setStatusText('');
     }
   }
 
@@ -282,10 +276,10 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
         <div
           role="status"
           aria-live="polite"
-          className="flex items-center gap-3.5 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-900"
+          className="flex items-center gap-3.5 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm font-medium text-emerald-900"
         >
           <Loader2 className="h-5 w-5 shrink-0 animate-spin text-emerald-600" />
-          <span>Scanning for syntax flaws, memory leaks, edge-case crashes & boilerplate patterns...</span>
+          <span>{statusText || 'Scanning for syntax flaws, memory leaks, edge-case crashes & boilerplate patterns...'}</span>
         </div>
       )}
 
@@ -314,7 +308,7 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
       )}
 
       {/* 3 Structured Output Cards */}
-      {result && !loading && (
+      {result && (
         <div className="space-y-6">
           {/* Card 1: Errors, Bugs & Fixes */}
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
@@ -329,14 +323,16 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
                 <span className="font-mono text-xs tabular-nums text-slate-500">
                   {result.bugsAndFixes.issues.length} issue{result.bugsAndFixes.issues.length === 1 ? '' : 's'} detected
                 </span>
-                <button
-                  type="button"
-                  onClick={() => onSendToViva(result.bugsAndFixes.fixedCode, language)}
-                  className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 whitespace-nowrap transition-colors hover:bg-emerald-100"
-                >
-                  <span>Prep Viva on Fixed Code</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
+                {!loading && result.bugsAndFixes.fixedCode && (
+                  <button
+                    type="button"
+                    onClick={() => onSendToViva(result.bugsAndFixes.fixedCode, language)}
+                    className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 whitespace-nowrap transition-colors hover:bg-emerald-100"
+                  >
+                    <span>Prep Viva on Fixed Code</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -345,10 +341,17 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
             </p>
 
             {result.bugsAndFixes.issues.length === 0 ? (
-              <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-                <span>No critical bugs or memory leaks detected.</span>
-              </div>
+              loading ? (
+                <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-600" />
+                  <span>Inspecting lines for bugs and memory leaks...</span>
+                </div>
+              ) : (
+                <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>No critical bugs or memory leaks detected.</span>
+                </div>
+              )
             ) : (
               <div className="mt-5 divide-y divide-slate-200 rounded-xl border border-slate-200 bg-slate-50/70">
                 {result.bugsAndFixes.issues.map((issue, idx) => (
@@ -357,16 +360,24 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
                       {renderSeverityIndicator(issue.severity)}
                       <span aria-hidden="true" className="text-slate-300">·</span>
                       <span className="font-semibold text-slate-900">{issue.category}</span>
-                      <span aria-hidden="true" className="text-slate-300">·</span>
-                      <span className="font-mono text-slate-500">{issue.location}</span>
+                      {issue.location && (
+                        <>
+                          <span aria-hidden="true" className="text-slate-300">·</span>
+                          <span className="font-mono text-slate-500">{issue.location}</span>
+                        </>
+                      )}
                     </div>
-                    <p className="mt-2 text-sm leading-relaxed text-slate-700">
-                      {issue.description}
-                    </p>
-                    <p className="mt-1.5 text-xs leading-relaxed text-emerald-800">
-                      <span className="font-semibold text-emerald-700">Fix applied: </span>
-                      {issue.fixExplanation}
-                    </p>
+                    {issue.description && (
+                      <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                        {issue.description}
+                      </p>
+                    )}
+                    {issue.fixExplanation && (
+                      <p className="mt-1.5 text-xs leading-relaxed text-emerald-800">
+                        <span className="font-semibold text-emerald-700">Fix applied: </span>
+                        {issue.fixExplanation}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -376,12 +387,19 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
               <h3 className="mb-3 text-sm font-semibold text-slate-900">
                 Fixed Working Code
               </h3>
-              <CodeBlock
-                code={result.bugsAndFixes.fixedCode}
-                language={language}
-                title={`fixed_${language === 'Java' ? 'Solution.java' : language === 'C++' ? 'code.cpp' : 'code'}`}
-                showDownload={true}
-              />
+              {result.bugsAndFixes.fixedCode ? (
+                <CodeBlock
+                  code={result.bugsAndFixes.fixedCode}
+                  language={language}
+                  title={`fixed_${language === 'Java' ? 'Solution.java' : language === 'C++' ? 'code.cpp' : 'code'}`}
+                  showDownload={!loading}
+                />
+              ) : (
+                <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-[#0F172A] px-4 py-5 font-mono text-xs text-emerald-300">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Streaming fixed {language} code...</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -398,7 +416,7 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
             </div>
 
             <p className="mt-4 text-sm leading-relaxed text-slate-700">
-              {result.originalityGuard.assessment}
+              {result.originalityGuard.assessment || (loading ? 'Checking for generic boilerplate & hidden AI watermarks...' : '')}
             </p>
 
             {result.originalityGuard.flaggedPatterns.length > 0 && (
@@ -413,9 +431,9 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
                       className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm"
                     >
                       <div className="font-mono text-xs font-semibold text-amber-700">
-                        {item.pattern}
+                        {item.pattern ?? 'Pattern'}
                       </div>
-                      <p className="mt-1 text-slate-700">{item.reason}</p>
+                      {item.reason && <p className="mt-1 text-slate-700">{item.reason}</p>}
                     </li>
                   ))}
                 </ul>
@@ -440,13 +458,13 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
                       {result.originalityGuard.refactoringTips.map((tip, idx) => (
                         <tr key={idx}>
                           <td className="px-4 py-3 font-mono text-xs text-red-700 whitespace-nowrap">
-                            {tip.original}
+                            {tip.original ?? ''}
                           </td>
                           <td className="px-4 py-3 font-mono text-xs font-semibold text-emerald-700 whitespace-nowrap">
-                            {tip.suggested}
+                            {tip.suggested ?? ''}
                           </td>
                           <td className="px-4 py-3 text-xs leading-relaxed text-slate-700">
-                            {tip.rationale}
+                            {tip.rationale ?? ''}
                           </td>
                         </tr>
                       ))}
@@ -466,25 +484,38 @@ export function DebugOriginalityTab({ onSendToViva }: DebugOriginalityTabProps) 
               </h2>
             </div>
 
-            <ul className="mt-5 divide-y divide-slate-200">
-              {result.plainEnglishExplainer.map((section, idx) => (
-                <li key={idx} className="py-4 first:pt-0 last:pb-0">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <span className="font-mono text-xs font-semibold tabular-nums text-emerald-700">
-                      0{idx + 1}.
-                    </span>
-                    <h3 className="text-sm font-semibold text-slate-900">
-                      {section.sectionTitle}
-                    </h3>
-                    <span aria-hidden="true" className="text-slate-300">·</span>
-                    <span className="font-mono text-xs text-slate-500">{section.lines}</span>
-                  </div>
-                  <p className="mt-1.5 text-sm leading-relaxed text-slate-700">
-                    {section.explanation}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            {result.plainEnglishExplainer.length === 0 && loading ? (
+              <div className="mt-4 flex items-center gap-2.5 text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                <span>Writing plain-English walkthrough...</span>
+              </div>
+            ) : (
+              <ul className="mt-5 divide-y divide-slate-200">
+                {result.plainEnglishExplainer.map((section, idx) => (
+                  <li key={idx} className="py-4 first:pt-0 last:pb-0">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="font-mono text-xs font-semibold tabular-nums text-emerald-700">
+                        0{idx + 1}.
+                      </span>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {section.sectionTitle ?? `Section ${idx + 1}`}
+                      </h3>
+                      {section.lines && (
+                        <>
+                          <span aria-hidden="true" className="text-slate-300">·</span>
+                          <span className="font-mono text-xs text-slate-500">{section.lines}</span>
+                        </>
+                      )}
+                    </div>
+                    {section.explanation && (
+                      <p className="mt-1.5 text-sm leading-relaxed text-slate-700">
+                        {section.explanation}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       )}

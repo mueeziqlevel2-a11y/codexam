@@ -1,9 +1,8 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  GeminiServiceError,
   debugAndAnalyze,
   prepareViva,
   solveAssignment,
@@ -33,6 +32,47 @@ function isValidStrictness(value: unknown): value is ExaminerStrictness {
   return value === 'friendly' || value === 'strict';
 }
 
+async function streamEndpoint<T>(
+  _req: Request,
+  res: Response,
+  initialStatus: string,
+  runner: (emitPartial: (partial: T) => void) => Promise<T>,
+): Promise<void> {
+  let clientClosed = false;
+  res.on('close', () => {
+    if (!res.writableFinished) {
+      clientClosed = true;
+    }
+  });
+
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const writeEvent = (payload: unknown) => {
+    if (clientClosed || res.destroyed || res.writableEnded) return;
+    res.write(`${JSON.stringify(payload)}\n`);
+  };
+
+  writeEvent({ type: 'status', message: initialStatus });
+
+  try {
+    const result = await runner((partial) => {
+      writeEvent({ type: 'partial', data: partial });
+    });
+    writeEvent({ type: 'done', data: result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unexpected server error.';
+    writeEvent({ type: 'error', error: message });
+  } finally {
+    if (!res.writableEnded && !res.destroyed) {
+      res.end();
+    }
+  }
+}
+
 async function startServer() {
   const app = express();
   const port = Number(process.env.PORT) || 3000;
@@ -44,100 +84,104 @@ async function startServer() {
   });
 
   app.post('/api/solve', async (req, res) => {
-    try {
-      const { prompt, files, language, includeComments } = req.body ?? {};
-      const cleanPrompt = typeof prompt === 'string' ? prompt.trim() : '';
-      const validFiles = Array.isArray(files)
-        ? files.filter(
-            (f) =>
-              f &&
-              typeof f.name === 'string' &&
-              typeof f.mimeType === 'string' &&
-              typeof f.data === 'string' &&
-              f.data.length > 0,
-          )
-        : [];
+    const { prompt, files, language, includeComments } = req.body ?? {};
+    const cleanPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+    const validFiles = Array.isArray(files)
+      ? files.filter(
+          (f) =>
+            f &&
+            typeof f.name === 'string' &&
+            typeof f.mimeType === 'string' &&
+            typeof f.data === 'string' &&
+            f.data.length > 0,
+        )
+      : [];
 
-      if (cleanPrompt.length < 5 && validFiles.length === 0) {
-        res.status(400).json({
-          error:
-            'Please upload an assignment file (PDF, image, or text) or enter a problem statement.',
-        });
-        return;
-      }
-      if (!isValidLanguage(language)) {
-        res.status(400).json({ error: 'Unsupported target language selected.' });
-        return;
-      }
-
-      const result = await solveAssignment({
-        prompt: cleanPrompt,
-        files: validFiles,
-        language,
-        includeComments: Boolean(includeComments),
+    if (cleanPrompt.length < 5 && validFiles.length === 0) {
+      res.status(400).json({
+        error:
+          'Please upload an assignment file (PDF, image, or text) or enter a problem statement.',
       });
-      res.json(result);
-    } catch (error) {
-      const status = error instanceof GeminiServiceError ? error.statusCode : 500;
-      const message =
-        error instanceof Error ? error.message : 'Unexpected server error while solving assignment.';
-      res.status(status).json({ error: message });
+      return;
     }
+    if (!isValidLanguage(language)) {
+      res.status(400).json({ error: 'Unsupported target language selected.' });
+      return;
+    }
+
+    const initialStatus =
+      validFiles.length > 0
+        ? `Reading uploaded file(s) and streaming ${language} solutions...`
+        : `Analyzing problem and streaming ${language} solution...`;
+
+    await streamEndpoint(req, res, initialStatus, (onPartial) =>
+      solveAssignment(
+        {
+          prompt: cleanPrompt,
+          files: validFiles,
+          language,
+          includeComments: Boolean(includeComments),
+        },
+        onPartial,
+      ),
+    );
   });
 
   app.post('/api/debug', async (req, res) => {
-    try {
-      const { code, language } = req.body ?? {};
-      if (typeof code !== 'string' || code.trim().length < 5) {
-        res.status(400).json({
-          error: 'Please paste or upload source code to debug and analyze.',
-        });
-        return;
-      }
-      if (!isValidLanguage(language)) {
-        res.status(400).json({ error: 'Unsupported language selected.' });
-        return;
-      }
-
-      const result = await debugAndAnalyze({
-        code: code.trim(),
-        language,
+    const { code, language } = req.body ?? {};
+    if (typeof code !== 'string' || code.trim().length < 5) {
+      res.status(400).json({
+        error: 'Please paste or upload source code to debug and analyze.',
       });
-      res.json(result);
-    } catch (error) {
-      const status = error instanceof GeminiServiceError ? error.statusCode : 500;
-      const message =
-        error instanceof Error ? error.message : 'Unexpected server error while debugging code.';
-      res.status(status).json({ error: message });
+      return;
     }
+    if (!isValidLanguage(language)) {
+      res.status(400).json({ error: 'Unsupported language selected.' });
+      return;
+    }
+
+    await streamEndpoint(
+      req,
+      res,
+      `Scanning ${language} code for bugs, traps & boilerplate...`,
+      (onPartial) =>
+        debugAndAnalyze(
+          {
+            code: code.trim(),
+            language,
+          },
+          onPartial,
+        ),
+    );
   });
 
   app.post('/api/viva', async (req, res) => {
-    try {
-      const { code, language, strictness } = req.body ?? {};
-      if (typeof code !== 'string' || code.trim().length < 5) {
-        res.status(400).json({
-          error: 'Please paste or upload your solved assignment code before generating viva prep.',
-        });
-        return;
-      }
-      const resolvedLanguage: SupportedLanguage = isValidLanguage(language) ? language : 'C++';
-      const resolvedStrictness: ExaminerStrictness = isValidStrictness(strictness)
-        ? strictness
-        : 'friendly';
-
-      const result = await prepareViva({
-        code: code.trim(),
-        language: resolvedLanguage,
-        strictness: resolvedStrictness,
+    const { code, language, strictness } = req.body ?? {};
+    if (typeof code !== 'string' || code.trim().length < 5) {
+      res.status(400).json({
+        error: 'Please paste or upload your solved assignment code before generating viva prep.',
       });
-      res.json(result);
-    } catch (error) {
-      const status = error instanceof GeminiServiceError ? error.statusCode : 500;
-      const message =
-        error instanceof Error ? error.message : 'Unexpected server error while generating viva prep.';
-      res.status(status).json({ error: message });
+      return;
     }
+    const resolvedLanguage: SupportedLanguage = isValidLanguage(language) ? language : 'C++';
+    const resolvedStrictness: ExaminerStrictness = isValidStrictness(strictness)
+      ? strictness
+      : 'friendly';
+
+    await streamEndpoint(
+      req,
+      res,
+      `Preparing ${resolvedStrictness === 'strict' ? 'strict examiner' : 'friendly TA'} demo script & viva questions...`,
+      (onPartial) =>
+        prepareViva(
+          {
+            code: code.trim(),
+            language: resolvedLanguage,
+            strictness: resolvedStrictness,
+          },
+          onPartial,
+        ),
+    );
   });
 
   if (process.env.NODE_ENV !== 'production') {

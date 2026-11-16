@@ -23,6 +23,7 @@ import type {
   SupportedLanguage,
   VivaResponse,
 } from '../types/codexam';
+import { postStreamingJson } from '../utils/streamApi';
 
 interface VivaPrepTabProps {
   prefilledCode?: { code: string; language: SupportedLanguage } | null;
@@ -36,6 +37,7 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
   const [uploadedFilename, setUploadedFilename] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VivaResponse | null>(null);
   const [revealedAnswers, setRevealedAnswers] = useState<Record<number, boolean>>({});
@@ -94,39 +96,33 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
 
     setLoading(true);
     setError(null);
+    setResult(null);
+    setRevealedAnswers({});
+    setRevealedHints({});
+    setStudentNotes({});
+    setStatusText(
+      `Preparing ${strictness === 'strict' ? 'strict examiner' : 'friendly TA'} demo script & viva questions...`,
+    );
 
     try {
-      const response = await fetch('/api/viva', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const finalData = await postStreamingJson<VivaResponse>({
+        url: '/api/viva',
+        body: {
           code: code.trim(),
           language,
           strictness,
-        }),
+        },
+        onStatus: (message) => setStatusText(message),
+        onPartial: (partial) => {
+          setResult(partial as VivaResponse);
+        },
       });
-      const rawText = await response.text();
-      let data: Partial<VivaResponse> & { error?: string } = {};
-      try {
-        data = rawText ? JSON.parse(rawText) : {};
-      } catch {
-        throw new Error(
-          response.ok
-            ? 'Received an unexpected non-JSON response from the server.'
-            : `Server error (${response.status}). Check your GEMINI_API_KEY configuration and try again.`,
-        );
-      }
-      if (!response.ok || data.error) {
-        throw new Error(data.error || `Failed to generate viva preparation (HTTP ${response.status}).`);
-      }
-      setResult(data as VivaResponse);
-      setRevealedAnswers({});
-      setRevealedHints({});
-      setStudentNotes({});
+      setResult(finalData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
       setLoading(false);
+      setStatusText('');
     }
   }
 
@@ -304,10 +300,10 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
         <div
           role="status"
           aria-live="polite"
-          className="flex items-center gap-3.5 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-900"
+          className="flex items-center gap-3.5 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm font-medium text-emerald-900"
         >
           <Loader2 className="h-5 w-5 shrink-0 animate-spin text-emerald-600" />
-          <span>Analyzing logic flow & generating viva questions...</span>
+          <span>{statusText || 'Analyzing logic flow & streaming viva questions...'}</span>
         </div>
       )}
 
@@ -336,7 +332,7 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
       )}
 
       {/* Output Sections */}
-      {result && !loading && (
+      {result && (
         <div className="space-y-8">
           {/* 1. 2-Minute Live Demo Script */}
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
@@ -354,31 +350,35 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
             </div>
 
             <p className="mt-4 text-sm leading-relaxed text-slate-700">
-              {result.demoScript.overview}
+              {result.demoScript.overview || (loading ? 'Structuring your 2-minute walkthrough...' : '')}
             </p>
 
             <ol className="mt-6 space-y-4">
-              {result.demoScript.steps.map((step) => (
+              {result.demoScript.steps.map((step, idx) => (
                 <li
-                  key={step.stepNumber}
+                  key={step.stepNumber ?? idx}
                   className="rounded-xl border border-slate-200 bg-slate-50/70 p-4"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5">
                       <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-emerald-100 font-mono text-xs font-bold tabular-nums text-emerald-800">
-                        {step.stepNumber}
+                        {step.stepNumber ?? idx + 1}
                       </span>
                       <span className="text-sm font-semibold text-slate-900">
-                        {step.phase}
+                        {step.phase ?? `Step ${idx + 1}`}
                       </span>
                     </div>
-                    <span className="font-mono text-xs font-medium text-emerald-700">
-                      Point to: {step.codeFocus}
-                    </span>
+                    {step.codeFocus && (
+                      <span className="font-mono text-xs font-medium text-emerald-700">
+                        Point to: {step.codeFocus}
+                      </span>
+                    )}
                   </div>
-                  <p className="mt-2.5 text-sm leading-relaxed text-slate-700">
-                    &ldquo;{step.talkingPoint}&rdquo;
-                  </p>
+                  {step.talkingPoint && (
+                    <p className="mt-2.5 text-sm leading-relaxed text-slate-700">
+                      &ldquo;{step.talkingPoint}&rdquo;
+                    </p>
+                  )}
                 </li>
               ))}
             </ol>
@@ -399,6 +399,13 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
                 Mode: {strictness === 'strict' ? 'Strict Viva Examiner' : 'Friendly Lab TA'}
               </span>
             </div>
+
+            {result.vivaQuestions.length === 0 && loading && (
+              <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-600 shadow-xs">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-600" />
+                <span>Generating code-specific viva cross-examination questions...</span>
+              </div>
+            )}
 
             <div className="space-y-3">
               {result.vivaQuestions.map((q) => {
@@ -432,13 +439,15 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
                           </span>
                         </div>
 
-                        <span className="font-mono text-xs text-slate-500">
-                          {q.codeReference}
-                        </span>
+                        {q.codeReference && (
+                          <span className="font-mono text-xs text-slate-500">
+                            {q.codeReference}
+                          </span>
+                        )}
                       </div>
 
                       <h3 className="mt-2.5 text-base font-semibold leading-snug text-slate-900">
-                        {q.question}
+                        {q.question || (loading ? 'Drafting question...' : '')}
                       </h3>
 
                       {/* Student Self-Test Input */}
@@ -470,7 +479,8 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
                           type="button"
                           onClick={() => toggleAnswer(q.id)}
                           aria-expanded={isAnswerOpen}
-                          className="inline-flex min-h-[38px] items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-800 whitespace-nowrap transition-colors hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+                          disabled={!q.modelAnswer}
+                          className="inline-flex min-h-[38px] items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-800 whitespace-nowrap transition-colors hover:bg-emerald-100 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
                         >
                           {isAnswerOpen ? (
                             <>
@@ -491,21 +501,22 @@ export function VivaPrepTab({ prefilledCode, onConsumePrefill }: VivaPrepTabProp
                           type="button"
                           onClick={() => toggleHint(q.id)}
                           aria-expanded={isHintOpen}
-                          className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:border-slate-300 hover:bg-slate-50"
+                          disabled={!q.hint}
+                          className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
                         >
                           <HelpCircle className="h-3.5 w-3.5 text-amber-600" />
                           <span>{isHintOpen ? 'Hide Hint' : 'Need a Hint?'}</span>
                         </button>
                       </div>
 
-                      {isHintOpen && (
+                      {isHintOpen && q.hint && (
                         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900">
                           <span className="font-semibold text-amber-800">Hint: </span>
                           {q.hint}
                         </div>
                       )}
 
-                      {isAnswerOpen && (
+                      {isAnswerOpen && q.modelAnswer && (
                         <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3.5 text-sm leading-relaxed text-slate-800">
                           <div className="mb-1 text-xs font-semibold text-emerald-800">
                             Model Examiner Answer

@@ -1,4 +1,4 @@
-import { Bug, Code2, GraduationCap } from 'lucide-react';
+import { Bug, Code2, ExternalLink, GraduationCap } from 'lucide-react';
 import type { WorkspaceTab } from '../types/codexam';
 import { CodeXamLogo } from './CodeXamLogo';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -76,9 +76,16 @@ export function Header({ activeTab, onTabChange }: HeaderProps) {
         {/* Actions & Creator Badge */}
         <div className="flex shrink-0 items-center gap-2.5">
           <PWAInstallButton />
-          <span className="hidden items-center rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-800 whitespace-nowrap sm:inline-flex">
-            Made by Mueez Ahmed
-          </span>
+          <a
+            href="https://mueez-80.netlify.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Visit Mueez Ahmed's portfolio website"
+            className="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-800 whitespace-nowrap transition-colors hover:border-emerald-300 hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:inline-flex"
+          >
+            <span>Made by Mueez Ahmed</span>
+            <ExternalLink className="h-3 w-3 text-emerald-600" />
+          </a>
         </div>
       </div>
 

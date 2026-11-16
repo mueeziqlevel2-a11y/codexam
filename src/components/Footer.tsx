@@ -1,3 +1,4 @@
+import { ExternalLink } from 'lucide-react';
 import { CodeXamLogo } from './CodeXamLogo';
 
 export function Footer() {
@@ -12,9 +13,16 @@ export function Footer() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-1 text-xs font-semibold text-emerald-800 whitespace-nowrap">
-            Made by Mueez Ahmed
-          </span>
+          <a
+            href="https://mueez-80.netlify.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Visit Mueez Ahmed's portfolio website"
+            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-1 text-xs font-semibold text-emerald-800 whitespace-nowrap transition-colors hover:border-emerald-300 hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+          >
+            <span>Made by Mueez Ahmed</span>
+            <ExternalLink className="h-3 w-3 text-emerald-600" />
+          </a>
         </div>
       </div>
     </footer>
