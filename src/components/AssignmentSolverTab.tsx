@@ -128,11 +128,11 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
   const [selectedQuestion, setSelectedQuestion] = useState<'all' | number>('all');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function addFiles(fileList: FileList | null) {
+  async function addFiles(fileList: FileList | File[] | null) {
     if (!fileList || fileList.length === 0) return;
     setError(null);
 
-    const incoming = Array.from(fileList);
+    const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
     if (attachedFiles.length + incoming.length > 5) {
       setError('You can attach up to 5 assignment files at once.');
       return;
@@ -168,6 +168,44 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
 
   function removeFile(id: string) {
     setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
+  }
+
+  function handleStatementPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
+
+    const hasPlainText = clipboardData.getData('text/plain').trim().length > 0;
+    if (hasPlainText) {
+      return;
+    }
+
+    const imageFiles: File[] = [];
+    for (const item of Array.from(clipboardData.items ?? [])) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const blob = item.getAsFile();
+        if (blob) {
+          const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+          const isGenericName = !blob.name || blob.name === 'image.png';
+          const fileName = isGenericName
+            ? `pasted-snapshot-${attachedFiles.length + imageFiles.length + 1}.${ext}`
+            : blob.name;
+          imageFiles.push(new File([blob], fileName, { type: blob.type || 'image/png' }));
+        }
+      }
+    }
+
+    if (imageFiles.length === 0 && clipboardData.files?.length) {
+      for (const file of Array.from(clipboardData.files)) {
+        if (file.type.startsWith('image/')) {
+          imageFiles.push(file);
+        }
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      void addFiles(imageFiles);
+    }
   }
 
   async function handleGenerate(e: React.FormEvent) {
@@ -333,23 +371,29 @@ export function AssignmentSolverTab({ onSendToViva }: AssignmentSolverTabProps) 
 
           {/* Prompt Textarea */}
           <div>
-            <label
-              htmlFor="assignment-prompt"
-              className="block text-sm font-semibold text-slate-800"
-            >
-              {attachedFiles.length > 0
-                ? 'Additional Instructions (Optional)'
-                : 'Or Paste Assignment Prompt / Problem Statement'}
-            </label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor="assignment-prompt"
+                className="block text-sm font-semibold text-slate-800"
+              >
+                {attachedFiles.length > 0
+                  ? 'Additional Instructions (Optional)'
+                  : 'Or Paste Assignment Prompt / Problem Statement / Snapshot'}
+              </label>
+              <span className="text-xs text-slate-500">
+                Supports <kbd className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">Ctrl+V</kbd> / <kbd className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">Cmd+V</kbd> screenshot paste
+              </span>
+            </div>
             <textarea
               id="assignment-prompt"
               rows={5}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              onPaste={handleStatementPaste}
               placeholder={
                 attachedFiles.length > 0
-                  ? 'Optional: Add constraints such as "Only solve Questions 1–3" or "Use STL vectors instead of raw arrays"...'
-                  : 'Example: Implement a C++ singly linked list for a university course waitlist with insertAtEnd, removeByStudentId, search, and proper destructor memory cleanup.'
+                  ? 'Optional: Add constraints such as "Only solve Questions 1–3", or paste another screenshot (Ctrl+V / Cmd+V)...'
+                  : 'Paste a problem statement OR press Ctrl+V / Cmd+V to paste a screenshot/snapshot of your question directly here...'
               }
               className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50/60 p-4 font-sans text-sm leading-relaxed text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
